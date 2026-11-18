@@ -57,6 +57,12 @@ def parse_field(f, form, errors):
     name, t = f["name"], f["type"]
     if t == "checkbox":
         return 1 if form.get(name) in ("1", "on", "true") else 0
+    if t == "weekdays":
+        dias = sorted({int(x) for x in form.getlist(name) if x in ("1", "2", "3", "4", "5", "6", "7")})
+        if not dias:
+            errors[name] = "Marque al menos un día."
+            return None
+        return ",".join(map(str, dias))
     raw = (form.get(name) or "").strip()
     if raw == "":
         if f["required"]:
@@ -284,6 +290,9 @@ class Entity:
                 flash("Revise los campos marcados en el formulario.", "danger")
             values = {f["name"]: (request.form.get(f["name"]) if f["type"] != "checkbox"
                                   else request.form.get(f["name"]) in ("1", "on", "true")) for f in fields}
+            for f in fields:
+                if f["type"] == "weekdays":
+                    values[f["name"]] = ",".join(request.form.getlist(f["name"]))
         elif row:
             values = dict(row)
         else:

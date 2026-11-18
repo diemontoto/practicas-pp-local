@@ -20,7 +20,7 @@ ROLES = [
     ("admin", "Administrador", "Acceso completo, gestión de usuarios y configuración general."),
     ("coordinador", "Coordinador de Prácticas Profesionalizantes",
      "Gestiona alumnos, empresas, prácticas, documentación, seguimiento e informes."),
-    ("tutor", "Docente tutor", "Consulta y evalúa a sus alumnos asignados; registra visitas y asistencia."),
+    ("tutor", "Docente tutor", "Consulta y evalúa a sus alumnos asignados; registra visitas e inasistencias."),
     ("consulta", "Consulta institucional", "Acceso de sólo lectura a la información autorizada."),
 ]
 

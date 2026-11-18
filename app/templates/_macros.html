@@ -75,6 +75,13 @@
       <input id="f_{{ f.name }}" type="text" value="{{ v if v is not none else '' }}" disabled>
     {% elif f.type == 'textarea' %}
       <textarea id="f_{{ f.name }}" name="{{ f.name }}" rows="{{ f.rows or 3 }}" {% if f.maxlen %}maxlength="{{ f.maxlen }}"{% endif %}>{{ v if v is not none else '' }}</textarea>
+    {% elif f.type == 'weekdays' %}
+      {% set marcados = (v if v is not none else '')|string %}
+      <div class="filter-row" id="f_{{ f.name }}" style="gap:.2rem .9rem">
+        {% for n, d in [(1, 'Lun'), (2, 'Mar'), (3, 'Mié'), (4, 'Jue'), (5, 'Vie'), (6, 'Sáb'), (7, 'Dom')] %}
+        <label class="check" style="padding:0"><input type="checkbox" name="{{ f.name }}" value="{{ n }}" {% if n|string in marcados.split(',') %}checked{% endif %}> {{ d }}</label>
+        {% endfor %}
+      </div>
     {% elif f.type == 'select' %}
       <select id="f_{{ f.name }}" name="{{ f.name }}" {% if f.attrs %}{% for k, a in f.attrs.items() %}{{ k }}="{{ a }}" {% endfor %}{% endif %}>
         <option value="">{{ '— Seleccione —' if f.required else '— Ninguno —' }}</option>
@@ -106,11 +113,12 @@
 {%- endmacro %}
 
 {# Tabla de alumnos-prácticas con progreso #}
-{% macro tabla_ap(rows, mostrar_empresa=True, mostrar_alumno=True, acciones=True) -%}
+{% macro tabla_ap(rows, mostrar_empresa=True, mostrar_alumno=True, acciones=True, mostrar_fechas=False) -%}
 <div class="table-wrap"><table class="table">
   <thead><tr>
     {% if mostrar_alumno %}<th>Alumno</th><th>Curso</th>{% endif %}
     <th>Práctica</th>{% if mostrar_empresa %}<th>Empresa</th>{% endif %}
+    {% if mostrar_fechas %}<th>Inicio</th><th>Fin</th>{% endif %}
     <th>Estado</th><th style="min-width:150px">Horas</th><th>Documentación</th>{% if acciones %}<th></th>{% endif %}
   </tr></thead>
   <tbody>
@@ -122,6 +130,8 @@
       {% endif %}
       <td><a href="{{ url_for('practicas.ficha', id=r.practica_id) }}">{{ r.numero }}</a><div class="muted small">{{ r.anio }}</div></td>
       {% if mostrar_empresa %}<td>{{ r.empresa }}</td>{% endif %}
+      {% if mostrar_fechas %}<td class="nowrap">{{ r.fecha_desde|fecha if r.fecha_desde else '—' }}</td>
+      <td class="nowrap">{{ r.fecha_hasta|fecha if r.fecha_hasta else '—' }}{% if r.fecha_hasta_estimada %}<div class="muted small">estimada</div>{% endif %}</td>{% endif %}
       <td>{{ r.estado|badge }}</td>
       <td>{{ progress(r.porcentaje, (r.horas_realizadas|num) ~ ' / ' ~ r.horas_requeridas ~ ' h') }}</td>
       <td>{{ doc_indicator(r.docs_estado, r.docs_faltan) }}</td>

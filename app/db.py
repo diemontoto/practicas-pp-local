@@ -54,6 +54,46 @@ def init_db(path):
     con.close()
 
 
+def migrate(path):
+    """Actualiza una base existente al esquema actual (idempotente; se ejecuta al iniciar la aplicación)."""
+    con = connect(path)
+    try:
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(practicas)")}
+        if "dias_semana" not in cols:
+            # --- v1.1: asistencia automática; sólo se cargan inasistencias
+            con.execute("ALTER TABLE practicas ADD COLUMN dias_semana TEXT NOT NULL DEFAULT '1,2,3,4,5'")
+            con.execute("ALTER TABLE practicas ADD COLUMN horas_dia REAL NOT NULL DEFAULT 4")
+            con.execute("""CREATE TABLE IF NOT EXISTS dias_sin_actividad (
+                id INTEGER PRIMARY KEY, fecha_desde TEXT NOT NULL, fecha_hasta TEXT, motivo TEXT NOT NULL,
+                practica_id INTEGER REFERENCES practicas(id), alumno_practica_id INTEGER REFERENCES alumnos_practicas(id),
+                creado_en TEXT NOT NULL DEFAULT (datetime('now','localtime')), creado_por INTEGER REFERENCES usuarios(id),
+                modificado_en TEXT, modificado_por INTEGER REFERENCES usuarios(id),
+                eliminado_en TEXT, eliminado_por INTEGER REFERENCES usuarios(id),
+                CHECK (fecha_hasta IS NULL OR fecha_hasta >= fecha_desde))""")
+            con.execute("CREATE INDEX IF NOT EXISTS ix_dsa_fechas ON dias_sin_actividad(fecha_desde, fecha_hasta)")
+            # Los «Presente» ya no se cargan: se dan de baja (lógica) y quedan como historial.
+            con.execute("UPDATE asistencias SET eliminado_en = ? WHERE tipo = 'Presente' AND eliminado_en IS NULL", (now(),))
+            # Las ausencias anteriores no tenían horas: pasan a descontar la jornada completa.
+            con.execute("""UPDATE asistencias SET horas = (SELECT p.horas_dia FROM alumnos_practicas ap JOIN practicas p ON p.id = ap.practica_id
+                                                         WHERE ap.id = asistencias.alumno_practica_id)
+                           WHERE tipo <> 'Presente' AND horas = 0""")
+            # Suspensiones vigentes: las horas dejan de correr desde la última modificación de la asignación.
+            con.execute("""INSERT INTO dias_sin_actividad(fecha_desde, motivo, alumno_practica_id)
+                           SELECT COALESCE(substr(modificado_en, 1, 10), date('now','localtime')), 'Suspensión', id
+                           FROM alumnos_practicas WHERE estado = 'Suspendida' AND eliminado_en IS NULL""")
+            con.execute("INSERT INTO historial_cambios(fecha, tabla, accion, detalle) VALUES (?, 'sistema', 'migrar', ?)",
+                        (now(), '{"version": "1.1", "cambio": "asistencia automática"}'))
+        # --- v1.2: referente de la empresa en los registros de seguimiento (visitas y observaciones)
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(seguimiento)")}
+        if cols and "referente_id" not in cols:
+            con.execute("ALTER TABLE seguimiento ADD COLUMN referente_id INTEGER REFERENCES referentes_empresas(id)")
+            con.execute("INSERT INTO historial_cambios(fecha, tabla, accion, detalle) VALUES (?, 'sistema', 'migrar', ?)",
+                        (now(), '{"version": "1.2", "cambio": "referente en seguimiento"}'))
+        con.commit()
+    finally:
+        con.close()
+
+
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

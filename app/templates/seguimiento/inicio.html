@@ -2,7 +2,7 @@
 {% from '_macros.html' import icon, tabla_ap, progress %}
 {% set title = 'Seguimiento y asistencia' %}
 {% block content %}
-<div class="page-head"><div><h1>Seguimiento y asistencia</h1><p class="muted">Avance de horas de cada alumno respecto de lo requerido.</p></div>
+<div class="page-head"><div><h1>Seguimiento y asistencia</h1><p class="muted">Avance de horas de cada alumno respecto de lo requerido. Las horas corren automáticamente los días de práctica; sólo se cargan las inasistencias.</p></div>
   <div class="head-actions"><a class="btn" href="{{ url_for('informes.ver', clave='horas_alumno', **args.to_dict()) }}">{{ icon('chart', 16) }} Informe de horas</a></div></div>
 <form class="filters card" method="get"><div class="filter-row">
   <div class="field grow"><label for="q">Buscar</label><input id="q" type="search" name="q" value="{{ args.get('q', '') }}" placeholder="Alumno, DNI, empresa o N° de práctica"></div>
@@ -21,5 +21,5 @@
   <div class="kpi amber"><div class="n">{{ total_req }}</div><div class="l">Horas requeridas</div></div>
   <div class="kpi teal"><div class="n">{{ cumplimiento|num }} %</div><div class="l">Cumplimiento global</div></div>
 </div>
-<div class="card flush">{{ tabla_ap(rows) }}</div>
+<div class="card flush">{{ tabla_ap(rows, mostrar_fechas=True) }}</div>
 {% endblock %}

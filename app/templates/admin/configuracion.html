@@ -5,6 +5,7 @@
 <div class="page-head"><div><h1>Configuración</h1><p class="muted">Datos institucionales, catálogos, seguridad y mantenimiento.</p></div></div>
 <div class="grid cols-3" style="margin-bottom:1rem">
   {% if can('configuracion.ver') %}<a class="card" style="margin:0;color:inherit" href="{{ url_for('ciclos.lista') }}"><h2>{{ icon('calendar', 18) }} Ciclos lectivos</h2><p class="muted" style="margin:0">Alta y activación de cada año lectivo.</p></a>{% endif %}
+  {% if can('catalogos.ver') %}<a class="card" style="margin:0;color:inherit" href="{{ url_for('dias_sin_actividad.lista') }}"><h2>{{ icon('calendar', 18) }} Feriados y recesos</h2><p class="muted" style="margin:0">Días en que no corren las horas de las prácticas.</p></a>{% endif %}
   {% if can('catalogos.ver') %}
   <a class="card" style="margin:0;color:inherit" href="{{ url_for('especialidades.lista') }}"><h2>{{ icon('settings', 18) }} Especialidades</h2><p class="muted" style="margin:0">Especialidades técnicas y horas de PP.</p></a>
   <a class="card" style="margin:0;color:inherit" href="{{ url_for('cursos.lista') }}"><h2>{{ icon('users', 18) }} Cursos</h2><p class="muted" style="margin:0">Cursos y cuáles requieren práctica.</p></a>
@@ -21,6 +22,8 @@
     <div class="field"><label for="nota_aprobacion">Nota mínima de aprobación (1-10)</label><input id="nota_aprobacion" name="nota_aprobacion" value="{{ cfg.nota_aprobacion }}" {% if not can('configuracion.editar') %}disabled{% endif %}></div>
     <div class="field"><label for="dias_alerta_vencimiento">Alertar vencimiento con (días de anticipación)</label><input id="dias_alerta_vencimiento" name="dias_alerta_vencimiento" value="{{ cfg.dias_alerta_vencimiento }}" {% if not can('configuracion.editar') %}disabled{% endif %}></div>
     <div class="field"><label for="umbral_ritmo">Umbral de ritmo insuficiente (% de diferencia plazo vs. horas)</label><input id="umbral_ritmo" name="umbral_ritmo" value="{{ cfg.umbral_ritmo }}" {% if not can('configuracion.editar') %}disabled{% endif %}></div>
+    <label class="check"><input type="checkbox" name="consulta_publica" value="1" {% if cfg.consulta_publica == '1' %}checked{% endif %} {% if not can('configuracion.editar') %}disabled{% endif %}>
+      Habilitar la consulta pública de «Seguimiento y asistencia» sin usuario (sólo lectura, sin datos personales)</label>
   </div>
   {% if can('configuracion.editar') %}<div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check', 16) }} Guardar</button></div>{% endif %}
 </form>

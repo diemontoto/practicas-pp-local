@@ -232,6 +232,7 @@ class Practicas(unittest.TestCase):
 
     def _nueva(self):
         d = {"ciclo_id": 1, "empresa_id": 1, "proyecto": "Proyecto de prueba", "horas_requeridas": 10, "fecha_inicio": date.today().isoformat(),
+             "dias_semana": ["1", "2", "3", "4", "5", "6", "7"], "horas_dia": "4",
              "fecha_fin_estimada": (date.today() + timedelta(days=30)).isoformat()}
         r = self.c.post("/practicas/nuevo", d, page="/practicas/nuevo")
         self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:300])
@@ -254,15 +255,13 @@ class Practicas(unittest.TestCase):
         # forzar queda auditado
         self.c.post(f"/practicas/ap/{apid}/estado", {"estado": "En curso", "forzar": "1"}, page=f"/practicas/{pid}")
         self.assertEqual(scalar("SELECT estado FROM alumnos_practicas WHERE id = ?", (apid,)), "En curso")
-        # asistencia: horas calculadas desde entrada/salida
+        # la asistencia corre sola; sólo se cargan inasistencias (y sólo en días de práctica)
         hoy = date.today().isoformat()
-        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": hoy, "tipo": "Presente", "hora_entrada": "08:00", "hora_salida": "11:30"},
-                    page="/seguimiento/asistencias/nuevo")
-        self.assertEqual(scalar("SELECT horas FROM asistencias WHERE alumno_practica_id = ?", (apid,)), 3.5)
-        # salida anterior a entrada es inválida
-        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": (date.today() - timedelta(days=1)).isoformat(), "tipo": "Presente",
-                                                        "hora_entrada": "12:00", "hora_salida": "09:00"}, page="/seguimiento/asistencias/nuevo")
-        self.assertEqual(scalar("SELECT COUNT(*) FROM asistencias WHERE alumno_practica_id = ?", (apid,)), 1)
+        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": (date.today() - timedelta(days=1)).isoformat(),
+                                                        "tipo": "Ausente injustificado"}, page="/seguimiento/asistencias/nuevo")
+        self.assertEqual(scalar("SELECT COUNT(*) FROM asistencias WHERE alumno_practica_id = ?", (apid,)), 0)   # anterior al inicio
+        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": hoy, "tipo": "Presente"}, page="/seguimiento/asistencias/nuevo")
+        self.assertEqual(scalar("SELECT COUNT(*) FROM asistencias WHERE alumno_practica_id = ?", (apid,)), 0)   # ya no se cargan presentes
         self.assertEqual(self.c.get(f"/seguimiento/ap/{apid}").status_code, 200)
         # evaluación y cierre: no se aprueba con horas incompletas sin forzar
         for quien in ("Tutor", "Referente"):
@@ -277,6 +276,119 @@ class Practicas(unittest.TestCase):
         r = self.c.get(f"/evaluaciones/ap/{apid}/informe.pdf")
         self.assertEqual(r.headers["Content-Type"], "application/pdf")
         self.assertTrue(r.data.startswith(b"%PDF"))
+
+    def _practica_en_curso(self, dias_atras=13, dias_semana=("1", "2", "3", "4", "5", "6", "7"), horas_dia="4", requeridas=100):
+        """Práctica con un alumno «En curso» iniciada hace `dias_atras` días. Devuelve (practica_id, ap_id)."""
+        ini = date.today() - timedelta(days=dias_atras)
+        d = {"ciclo_id": 1, "empresa_id": 1, "proyecto": "Asistencia automática", "horas_requeridas": requeridas, "fecha_inicio": ini.isoformat(),
+             "fecha_fin_estimada": (date.today() + timedelta(days=30)).isoformat(), "dias_semana": list(dias_semana), "horas_dia": horas_dia}
+        r = self.c.post("/practicas/nuevo", d, page="/practicas/nuevo")
+        self.assertEqual(r.status_code, 302, r.get_data(as_text=True)[:300])
+        pid = scalar("SELECT id FROM practicas ORDER BY id DESC LIMIT 1")
+        libre = scalar("SELECT id FROM alumnos WHERE id NOT IN (SELECT alumno_id FROM alumnos_practicas) AND eliminado_en IS NULL LIMIT 1")
+        self.c.post(f"/practicas/{pid}/alumnos", {"alumno_ids": libre}, page=f"/practicas/{pid}")
+        apid = scalar("SELECT id FROM alumnos_practicas WHERE practica_id = ? AND alumno_id = ?", (pid, libre))
+        self.c.post(f"/practicas/ap/{apid}/estado", {"estado": "En curso", "forzar": "1"}, page=f"/practicas/{pid}")
+        return pid, apid
+
+    def _horas(self, apid):
+        from app import services
+        with APP.app_context():
+            r = services.ap_rows({"ap_id": apid}, scoped=False, con_docs=False)[0]
+        return r
+
+    def test_asistencia_automatica(self):
+        pid, apid = self._practica_en_curso(dias_atras=13)            # 14 días corridos, todos de práctica, 4 h
+        r = self._horas(apid)
+        self.assertEqual((r["dias_programados"], r["horas_programadas"], r["horas_realizadas"]), (14, 56, 56))
+        # una inasistencia de jornada completa y otra parcial descuentan horas
+        f1, f2 = (date.today() - timedelta(days=3)).isoformat(), (date.today() - timedelta(days=2)).isoformat()
+        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": f1, "tipo": "Ausente injustificado"}, page="/seguimiento/asistencias/nuevo")
+        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": f2, "tipo": "Ausente justificado", "horas": "1.5"}, page="/seguimiento/asistencias/nuevo")
+        r = self._horas(apid)
+        self.assertEqual((r["horas_descontadas"], r["horas_realizadas"], r["faltas_injust"], r["faltas_just"]), (5.5, 50.5, 1, 1))
+        # rechazos: duplicada, futura, más horas que la jornada
+        fut = (date.today() + timedelta(days=1)).isoformat()
+        for datos in ({"fecha": f1, "tipo": "Ausente justificado"}, {"fecha": fut, "tipo": "Ausente justificado"},
+                      {"fecha": date.today().isoformat(), "tipo": "Ausente justificado", "horas": "9"}):
+            self.c.post("/seguimiento/asistencias/nuevo", dict(datos, alumno_practica_id=apid), page="/seguimiento/asistencias/nuevo")
+        self.assertEqual(scalar("SELECT COUNT(*) FROM asistencias WHERE alumno_practica_id = ? AND eliminado_en IS NULL", (apid,)), 2)
+        # carga en lote del día: marcar ausente y luego volver a presente quita la inasistencia
+        hoy = date.today().isoformat()
+        self.c.post(f"/seguimiento/practica/{pid}/dia", {"fecha": hoy, f"tipo_{apid}": "Ausente injustificado"}, page=f"/seguimiento/practica/{pid}/dia")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 46.5)
+        self.c.post(f"/seguimiento/practica/{pid}/dia", {"fecha": hoy, f"tipo_{apid}": ""}, page=f"/seguimiento/practica/{pid}/dia")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 50.5)
+        for url in (f"/seguimiento/ap/{apid}", f"/seguimiento/practica/{pid}/dia", f"/practicas/{pid}", f"/practicas/{pid}/editar", "/informes/asistencia"):
+            self.assertEqual(self.c.get(url).status_code, 200, url)
+
+    def test_dias_de_la_semana_feriados_y_fin(self):
+        from app import services
+        # sólo lunes, miércoles y viernes, 3 h; período fijo de dos semanas
+        dias = services.dias_de_practica("2026-03-02", "2026-03-15", "1,3,5")
+        self.assertEqual(dias, ["2026-03-02", "2026-03-04", "2026-03-06", "2026-03-09", "2026-03-11", "2026-03-13"])
+        self.assertEqual(len(services.dias_de_practica("2026-03-02", "2026-03-15", "1,3,5", [("2026-03-04", "2026-03-09")])), 3)
+        pid, apid = self._practica_en_curso(dias_atras=9)
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 40)
+        # un feriado general deja de sumar ese día y no admite inasistencias
+        fer = (date.today() - timedelta(days=4)).isoformat()
+        r = self.c.post("/configuracion/dias_sin_actividad/nuevo", {"fecha_desde": fer, "motivo": "Feriado de prueba"}, page="/configuracion/dias_sin_actividad/nuevo")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 36)
+        self.c.post("/seguimiento/asistencias/nuevo", {"alumno_practica_id": apid, "fecha": fer, "tipo": "Ausente injustificado"}, page="/seguimiento/asistencias/nuevo")
+        self.assertEqual(scalar("SELECT COUNT(*) FROM asistencias WHERE alumno_practica_id = ?", (apid,)), 0)
+        self.assertEqual(self.c.get("/configuracion/dias_sin_actividad/").status_code, 200)
+        fid = scalar("SELECT id FROM dias_sin_actividad WHERE motivo = 'Feriado de prueba'")
+        as_user("admin").post(f"/configuracion/dias_sin_actividad/{fid}/baja", page="/configuracion/dias_sin_actividad/")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 40)
+        # las horas dejan de correr en la fecha de finalización
+        con = db()
+        con.execute("UPDATE practicas SET fecha_fin_estimada = ? WHERE id = ?", ((date.today() - timedelta(days=5)).isoformat(), pid))
+        con.commit()
+        con.close()
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 20)
+
+    def test_suspension_detiene_las_horas(self):
+        pid, apid = self._practica_en_curso(dias_atras=4)
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 20)
+        self.c.post(f"/practicas/ap/{apid}/estado", {"estado": "Suspendida"}, page=f"/practicas/{pid}")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 16)          # hoy ya no suma
+        con = db()                                                            # la suspensión empezó hace 2 días
+        con.execute("UPDATE dias_sin_actividad SET fecha_desde = ? WHERE alumno_practica_id = ?", ((date.today() - timedelta(days=2)).isoformat(), apid))
+        con.commit()
+        con.close()
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 8)
+        self.c.post(f"/practicas/ap/{apid}/estado", {"estado": "En curso", "forzar": "1"}, page=f"/practicas/{pid}")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 12)          # vuelve a sumar desde hoy
+        # antes de comenzar no corren horas
+        self.c.post(f"/practicas/ap/{apid}/estado", {"estado": "Habilitada para comenzar", "forzar": "1"}, page=f"/practicas/{pid}")
+        self.assertEqual(self._horas(apid)["horas_realizadas"], 0)
+
+    def test_migracion_de_base_anterior(self):
+        import sqlite3
+        from app.db import migrate
+        path = os.path.join(TMP, "vieja.db")
+        con = sqlite3.connect(path)
+        con.executescript("""
+            CREATE TABLE practicas (id INTEGER PRIMARY KEY, numero TEXT);
+            CREATE TABLE alumnos_practicas (id INTEGER PRIMARY KEY, practica_id INTEGER, estado TEXT, modificado_en TEXT, eliminado_en TEXT);
+            CREATE TABLE asistencias (id INTEGER PRIMARY KEY, alumno_practica_id INTEGER, fecha TEXT, tipo TEXT, horas REAL, eliminado_en TEXT);
+            CREATE TABLE usuarios (id INTEGER PRIMARY KEY);
+            CREATE TABLE historial_cambios (id INTEGER PRIMARY KEY, fecha TEXT, usuario_id INTEGER, usuario_nombre TEXT, tabla TEXT, registro_id INTEGER, accion TEXT, detalle TEXT, ip TEXT);
+            INSERT INTO practicas VALUES (1, 'PP-1');
+            INSERT INTO alumnos_practicas VALUES (1, 1, 'En curso', NULL, NULL), (2, 1, 'Suspendida', '2026-05-04 10:00:00', NULL);
+            INSERT INTO asistencias VALUES (1, 1, '2026-05-04', 'Presente', 4, NULL), (2, 1, '2026-05-05', 'Ausente justificado', 0, NULL);
+        """)
+        con.commit()
+        con.close()
+        migrate(path)
+        migrate(path)                                                         # idempotente
+        con = sqlite3.connect(path)
+        self.assertEqual(con.execute("SELECT dias_semana, horas_dia FROM practicas").fetchone(), ("1,2,3,4,5", 4))
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM asistencias WHERE eliminado_en IS NULL").fetchone()[0], 1)
+        self.assertEqual(con.execute("SELECT horas FROM asistencias WHERE id = 2").fetchone()[0], 4)
+        self.assertEqual(con.execute("SELECT fecha_desde, alumno_practica_id FROM dias_sin_actividad").fetchall(), [("2026-05-04", 2)])
+        con.close()
 
     def test_alumno_no_duplicado_en_practica(self):
         pid = self._nueva()
@@ -427,6 +539,130 @@ class Respaldos(unittest.TestCase):
         c.post("/configuracion/respaldos/restaurar", {"archivo": (io.BytesIO(b"no es zip"), "x.zip"), "confirmar": "RESTAURAR"},
                page="/configuracion/respaldos", content_type="multipart/form-data")
         self.assertGreater(scalar("SELECT COUNT(*) FROM alumnos"), 0)
+
+
+class ReferenteEnSeguimiento(unittest.TestCase):
+    """Visitas y observaciones: se puede indicar el referente de la empresa de la práctica."""
+
+    def test_referente_en_visitas(self):
+        con = db()
+        try:
+            p = con.execute("SELECT p.id, p.empresa_id FROM practicas p WHERE p.eliminado_en IS NULL AND EXISTS "
+                            "(SELECT 1 FROM referentes_empresas r WHERE r.empresa_id = p.empresa_id AND r.eliminado_en IS NULL AND r.activo = 1) "
+                            "LIMIT 1").fetchone()
+            ref = con.execute("SELECT id, nombre FROM referentes_empresas WHERE empresa_id = ? AND eliminado_en IS NULL AND activo = 1",
+                              (p[1],)).fetchone()
+            otro = con.execute("SELECT id, nombre FROM referentes_empresas WHERE empresa_id <> ? AND eliminado_en IS NULL LIMIT 1",
+                               (p[1],)).fetchone()
+        finally:
+            con.close()
+        adm = as_user("admin")
+        form_url = f"/seguimiento/visitas/nuevo?practica_id={p[0]}"
+        html = adm.get(form_url).get_data(as_text=True)
+        self.assertIn("Referente de la empresa", html)
+        self.assertIn(ref[1], html)
+        self.assertNotIn(otro[1], html)  # sólo los referentes de la empresa de la práctica
+        datos = {"practica_id": p[0], "fecha": "2026-11-10", "tipo": "Visita", "descripcion": "Visita con referente"}
+        adm.post("/seguimiento/visitas/nuevo", dict(datos, referente_id=otro[0]), page=form_url)
+        self.assertIsNone(scalar("SELECT id FROM seguimiento WHERE descripcion = 'Visita con referente'"))
+        adm.post("/seguimiento/visitas/nuevo", dict(datos, referente_id=ref[0]), page=form_url)
+        self.assertEqual(scalar("SELECT referente_id FROM seguimiento WHERE descripcion = 'Visita con referente'"), ref[0])
+        ficha = adm.get(f"/practicas/{p[0]}").get_data(as_text=True)
+        self.assertIn(f"Referente:</span> {ref[1]}", ficha)
+
+    def test_migracion_agrega_columna(self):
+        import sqlite3
+        import tempfile
+        from app import db as dbmod
+        ruta = os.path.join(tempfile.mkdtemp(), "vieja.db")
+        dbmod.init_db(ruta)
+        con = sqlite3.connect(ruta)
+        con.execute("ALTER TABLE seguimiento DROP COLUMN referente_id")
+        con.commit()
+        con.close()
+        dbmod.migrate(ruta)
+        dbmod.migrate(ruta)  # idempotente
+        con = sqlite3.connect(ruta)
+        self.assertIn("referente_id", [r[1] for r in con.execute("PRAGMA table_info(seguimiento)")])
+        con.close()
+
+
+class ConsultaPublica(unittest.TestCase):
+    """Acceso libre sin usuario: sólo lectura de Seguimiento y asistencia, sin datos personales."""
+
+    def test_acceso_sin_usuario_y_sin_datos_personales(self):
+        c = Client()
+        self.assertIn("/consulta/", c.get("/login").get_data(as_text=True))
+        r = c.get("/consulta/?ciclo_id=")
+        self.assertEqual(r.status_code, 200)
+        html = r.get_data(as_text=True)
+        self.assertIn("Sólo consulta", html)
+        self.assertIn("<th>Inicio</th><th>Fin</th>", html)
+        con = db()
+        try:
+            alumno = con.execute("SELECT a.apellido, a.dni, a.legajo FROM alumnos a JOIN alumnos_practicas ap ON ap.alumno_id = a.id "
+                                 "WHERE ap.eliminado_en IS NULL AND a.eliminado_en IS NULL LIMIT 1").fetchone()
+            dnis = [row[0] for row in con.execute("SELECT dni FROM alumnos WHERE dni IS NOT NULL AND dni <> ''")]
+        finally:
+            con.close()
+        self.assertIn(alumno[0], html)
+        for dni in dnis:
+            self.assertNotIn(dni, html)
+        for ruta in ("/alumnos/", "/practicas/", "/seguimiento/ap/", "/empresas/", "/documentos/", "/logout", "_csrf"):
+            self.assertNotIn(ruta, html)
+        # no se puede buscar por DNI
+        self.assertNotIn(alumno[0], c.get(f"/consulta/?ciclo_id=&q={alumno[1]}").get_data(as_text=True))
+
+    def test_no_permite_modificar_ni_salir_de_la_consulta(self):
+        c = Client()
+        c.get("/consulta/")
+        for metodo in (c.c.post, c.c.put, c.c.delete):
+            self.assertIn(metodo("/consulta/").status_code, (400, 405))
+        for url in ("/", "/seguimiento/", "/alumnos/", "/alumnos/1", "/seguimiento/ap/1", "/seguimiento/asistencias/nuevo", "/buscar?q=a"):
+            r = c.get(url)
+            self.assertEqual(r.status_code, 302, url)
+            self.assertIn("/login", r.headers["Location"])
+
+    def test_se_puede_deshabilitar(self):
+        adm = as_user("admin")
+        datos = {k: scalar("SELECT valor FROM configuracion WHERE clave = ?", (k,)) or "" for k in
+                 ("escuela_nombre", "escuela_cue", "escuela_direccion", "escuela_localidad", "escuela_telefono", "escuela_email",
+                  "nota_aprobacion", "dias_alerta_vencimiento", "umbral_ritmo")}
+        adm.post("/configuracion/", datos, page="/configuracion/")  # sin la casilla: deshabilita
+        c = Client()
+        self.assertEqual(c.get("/consulta/").status_code, 404)
+        self.assertNotIn("/consulta/", c.get("/login").get_data(as_text=True))
+        adm.post("/configuracion/", dict(datos, consulta_publica="1"), page="/configuracion/")
+        self.assertEqual(Client().get("/consulta/").status_code, 200)
+
+    def test_practica_nueva_se_ve_al_instante(self):
+        con = db()
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(practicas)") if r[1] != "id"]
+            fila = dict(zip(cols, con.execute(f"SELECT {', '.join(cols)} FROM practicas LIMIT 1").fetchone()))
+            fila.update(numero="PP-PUBLICA-0001", eliminado_en=None, eliminado_por=None)
+            con.execute(f"INSERT INTO practicas ({', '.join(fila)}) VALUES ({', '.join('?' * len(fila))})", list(fila.values()))
+            con.commit()
+            pid = con.execute("SELECT id FROM practicas WHERE numero = 'PP-PUBLICA-0001'").fetchone()[0]
+        finally:
+            con.close()
+        html = Client().get("/consulta/?ciclo_id=").get_data(as_text=True)
+        self.assertIn("PP-PUBLICA-0001", html)
+        self.assertIn("Sin alumnos asignados", html)
+        con = db()
+        try:
+            alumno_id = con.execute("SELECT id FROM alumnos WHERE eliminado_en IS NULL LIMIT 1").fetchone()[0]
+            con.execute("INSERT INTO alumnos_practicas (practica_id, alumno_id, estado, horas_requeridas) VALUES (?, ?, ?, 200)",
+                        (pid, alumno_id, "Pendiente de asignación"))
+            con.commit()
+        finally:
+            con.close()
+        html = Client().get("/consulta/?ciclo_id=").get_data(as_text=True)
+        self.assertIn("PP-PUBLICA-0001", html)
+
+    def test_fechas_en_seguimiento(self):
+        html = as_user("admin").get("/seguimiento/?ciclo_id=").get_data(as_text=True)
+        self.assertIn("<th>Inicio</th><th>Fin</th>", html)
 
 
 def tearDownModule():

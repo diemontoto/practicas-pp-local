@@ -98,7 +98,7 @@ def r_horas(f):
 
 
 def r_asistencia(f):
-    where, params = ["s.eliminado_en IS NULL"], []
+    where, params = ["s.eliminado_en IS NULL", "s.tipo <> 'Presente'"], []
     for key, col in (("ciclo_id", "p.ciclo_id"), ("especialidad_id", "a.especialidad_id"), ("curso_id", "a.curso_id"), ("division_id", "a.division_id"),
                      ("empresa_id", "p.empresa_id"), ("tutor_id", "p.tutor_id")):
         if f.get(key):
@@ -116,10 +116,10 @@ def r_asistencia(f):
              "JOIN alumnos a ON a.id = ap.alumno_id JOIN empresas em ON em.id = p.empresa_id "
              f"WHERE {' AND '.join(where)} AND {sc} ORDER BY s.fecha DESC, a.apellido LIMIT 5000", params + sp)
     cols = [("Fecha", 1, "date"), ("Alumno", 3, "text"), ("N° práctica", 1.3, "text"), ("Empresa", 2.4, "text"), ("Tipo", 1.8, "text"),
-            ("Entrada", 0.8, "text"), ("Salida", 0.8, "text"), ("Horas", 0.7, "num")]
+            ("Horas descontadas", 1.1, "num"), ("Motivo / observaciones", 2.6, "text")]
     tot = sum(r["horas"] for r in rows)
-    return cols, [[r["fecha"], r["alumno"], r["numero"], r["empresa"], r["tipo"], r["hora_entrada"], r["hora_salida"], r["horas"]] for r in rows], \
-        [f"Total de horas del período: {tot:g}"]
+    return cols, [[r["fecha"], r["alumno"], r["numero"], r["empresa"], r["tipo"], r["horas"], r["observaciones"]] for r in rows], \
+        [f"Inasistencias del período: {len(rows)}", f"Total de horas descontadas: {tot:g}"]
 
 
 def r_doc_pendiente(f):
@@ -190,7 +190,7 @@ REPORTES = {
     "en_curso": ("Prácticas en curso", "Prácticas actualmente en ejecución con su avance de horas.", r_en_curso, F_AP[:-1], True),
     "finalizadas": ("Prácticas finalizadas", "Prácticas finalizadas, aprobadas o desaprobadas.", r_finalizadas, F_AP[:-1], True),
     "horas_alumno": ("Horas realizadas por alumno", "Horas requeridas, realizadas y pendientes de cada alumno.", r_horas, F_AP, True),
-    "asistencia": ("Asistencia", "Detalle de asistencias e inasistencias por fecha.", r_asistencia, F_AP[:-1] + ["desde", "hasta"], True),
+    "asistencia": ("Inasistencias", "Detalle de inasistencias por fecha y horas descontadas (la asistencia se calcula automáticamente).", r_asistencia, F_AP[:-1] + ["desde", "hasta"], True),
     "doc_pendiente": ("Documentación pendiente", "Alumnos con documentación incompleta o sin revisar y qué documentos faltan.", r_doc_pendiente, F_AP, True),
     "evaluaciones": ("Evaluaciones finales", "Evaluaciones del tutor y del referente, nota final y resultado.", r_evaluaciones, F_AP, True),
     "empresas": ("Empresas participantes", "Empresas con sus vacantes, ocupación y alumnos recibidos.", r_empresas, ["ciclo_id", "empresa_id"], False),

@@ -138,3 +138,12 @@ a.kpi:hover { text-decoration: none; background: #fafcff; }
   .kpis { grid-template-columns: repeat(2, 1fr); } .kpi .n { font-size: 1.5rem; }
 }
 @media print { .sidebar, .topbar, .head-actions, .filters, .form-actions, .btn { display: none !important; } .main { margin: 0; } .card { box-shadow: none; } }
+
+/* ---------- consulta pública (sin usuario, sólo lectura) ---------- */
+.nowrap { white-space: nowrap; }
+.btn-guest { margin-top: .8rem; }
+.public-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1.4rem; background: var(--navy); color: #fff; flex-wrap: wrap; }
+.public-top .brand { display: flex; align-items: center; gap: .7rem; padding: 0; border: 0; margin: 0; }
+.public-top .brand strong { display: block; } .public-top .brand span { font-size: .85rem; opacity: .8; }
+.public-content { max-width: 1300px; margin: 0 auto; padding: 1.2rem; }
+.readonly-tag { display: inline-block; background: #fff3cd; color: #7a5a00; border-radius: 999px; padding: .15rem .7rem; font-size: .8rem; font-weight: 600; }

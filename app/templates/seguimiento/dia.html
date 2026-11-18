@@ -1,21 +1,22 @@
 {% extends 'base.html' %}
 {% from '_macros.html' import icon, csrf %}
-{% set title = 'Asistencia del día' %}
+{% set title = 'Inasistencias del día' %}
 {% block content %}
-<div class="page-head"><div><h1>Asistencia del día</h1><p class="muted">{{ p.numero }} · {{ p.proyecto }} · {{ p.empresa }}</p></div>
+<div class="page-head"><div><h1>Inasistencias del día</h1><p class="muted">{{ p.numero }} · {{ p.proyecto }} · {{ p.empresa }}</p></div>
   <div class="head-actions"><a class="btn" href="{{ url_for('practicas.ficha', id=p.id) }}">{{ icon('back', 16) }} Volver a la práctica</a></div></div>
-<form method="get" class="card filter-row"><div class="field"><label for="fecha">Fecha</label><input id="fecha" type="date" name="fecha" value="{{ fecha }}"></div>
+<div class="flash flash-info">La asistencia es automática: cada día de práctica ({{ dias_txt|lower }}) suma {{ p.horas_dia|num }} h a todos los alumnos. Marque sólo a quienes faltaron; el resto queda presente.</div>
+<form method="get" class="card filter-row"><div class="field"><label for="fecha">Fecha</label><input id="fecha" type="date" name="fecha" value="{{ fecha }}" max="{{ hoy }}"></div>
   <div class="field"><button class="btn" type="submit">Cambiar fecha</button></div></form>
+{% if aviso %}<div class="card"><p class="muted" style="margin:0">{{ aviso }}</p></div>{% else %}
 <form method="post" class="card flush">{{ csrf() }}<input type="hidden" name="fecha" value="{{ fecha }}">
-  <div class="table-wrap"><table class="table"><thead><tr><th>Alumno</th><th>Asistencia</th><th>Entrada</th><th>Salida</th><th>Observaciones</th></tr></thead><tbody>
-  {% for r in aps %}{% set prev = previas.get(r.ap_id) %}{% set last = ultimas.get(r.ap_id) %}
+  <div class="table-wrap"><table class="table"><thead><tr><th>Alumno</th><th>Asistencia</th><th>Horas a descontar</th><th>Motivo / observaciones</th></tr></thead><tbody>
+  {% for r in aps %}{% set prev = previas.get(r.ap_id) %}
     <tr><td>{{ r.alumno }}<div class="muted small">{{ r.estado }}</div></td>
-      <td><select name="tipo_{{ r.ap_id }}"><option value="">— sin cargar —</option>{% for t in tipos %}<option {% if prev and prev.tipo == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></td>
-      <td><input type="time" name="ent_{{ r.ap_id }}" value="{{ prev.hora_entrada if prev else (last.hora_entrada if last else '') }}"></td>
-      <td><input type="time" name="sal_{{ r.ap_id }}" value="{{ prev.hora_salida if prev else (last.hora_salida if last else '') }}"></td>
+      <td><select name="tipo_{{ r.ap_id }}"><option value="">Presente (automático)</option>{% for t in tipos %}<option {% if prev and prev.tipo == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></td>
+      <td><input type="number" name="hs_{{ r.ap_id }}" step="any" min="0.25" max="{{ r.horas_dia }}" placeholder="Jornada completa ({{ r.horas_dia|num }} h)" value="{{ prev.horas|num(2) if prev and prev.horas != r.horas_dia else '' }}"></td>
       <td><input type="text" name="obs_{{ r.ap_id }}" maxlength="300" value="{{ prev.observaciones if prev and prev.observaciones else '' }}"></td></tr>
-  {% else %}<tr><td colspan="5" class="empty">No hay alumnos activos en esta práctica.</td></tr>{% endfor %}
+  {% endfor %}
   </tbody></table></div>
-  <div class="form-actions" style="padding:0 1.2rem 1.2rem"><button class="btn btn-primary" type="submit">{{ icon('check', 16) }} Guardar asistencia</button></div>
-</form>
+  <div class="form-actions" style="padding:0 1.2rem 1.2rem"><button class="btn btn-primary" type="submit">{{ icon('check', 16) }} Guardar inasistencias</button></div>
+</form>{% endif %}
 {% endblock %}

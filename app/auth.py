@@ -14,7 +14,8 @@ from .db import audit, ex, now, q, q1, commit
 
 bp = Blueprint("auth", __name__)
 
-PUBLIC_ENDPOINTS = {"auth.login", "static", "main.salud"}
+# «consulta.inicio»: consulta pública de sólo lectura de Seguimiento y asistencia (ver views/consulta.py)
+PUBLIC_ENDPOINTS = {"auth.login", "static", "main.salud", "consulta.inicio"}
 IDLE_SECONDS = 2 * 3600
 MAX_INTENTOS = 5
 BLOQUEO_MINUTOS = 15

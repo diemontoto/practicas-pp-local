@@ -264,6 +264,8 @@ CREATE TABLE practicas (
     fecha_fin_real     TEXT,
     horas_requeridas   INTEGER NOT NULL DEFAULT 200 CHECK (horas_requeridas > 0),
     dias_horarios      TEXT,
+    dias_semana        TEXT NOT NULL DEFAULT '1,2,3,4,5',   -- días de práctica: 1 = lunes ... 7 = domingo
+    horas_dia          REAL NOT NULL DEFAULT 4 CHECK (horas_dia > 0 AND horas_dia <= 14),
     objetivos          TEXT,
     actividades        TEXT,
     observaciones      TEXT,
@@ -308,6 +310,8 @@ CREATE TABLE alumnos_practicas (
 CREATE UNIQUE INDEX ux_ap_practica_alumno ON alumnos_practicas(practica_id, alumno_id) WHERE eliminado_en IS NULL;
 CREATE INDEX ix_ap_alumno ON alumnos_practicas(alumno_id);
 
+-- Inasistencias: las horas corren solas según el calendario de la práctica y cada registro descuenta `horas`.
+-- ('Presente' se conserva sólo para registros históricos anteriores al cálculo automático.)
 CREATE TABLE asistencias (
     id                  INTEGER PRIMARY KEY,
     alumno_practica_id  INTEGER NOT NULL REFERENCES alumnos_practicas(id),
@@ -327,6 +331,25 @@ CREATE TABLE asistencias (
 );
 CREATE UNIQUE INDEX ux_asistencia_dia ON asistencias(alumno_practica_id, fecha) WHERE eliminado_en IS NULL;
 
+-- Días sin actividad: feriados y recesos (generales), cierres de una práctica y suspensiones de un alumno.
+-- En esas fechas no corren las horas automáticas. fecha_hasta NULL = período abierto (suspensión vigente).
+CREATE TABLE dias_sin_actividad (
+    id                  INTEGER PRIMARY KEY,
+    fecha_desde         TEXT NOT NULL,
+    fecha_hasta         TEXT,
+    motivo              TEXT NOT NULL,
+    practica_id         INTEGER REFERENCES practicas(id),
+    alumno_practica_id  INTEGER REFERENCES alumnos_practicas(id),
+    creado_en           TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    creado_por          INTEGER REFERENCES usuarios(id),
+    modificado_en       TEXT,
+    modificado_por      INTEGER REFERENCES usuarios(id),
+    eliminado_en        TEXT,
+    eliminado_por       INTEGER REFERENCES usuarios(id),
+    CHECK (fecha_hasta IS NULL OR fecha_hasta >= fecha_desde)
+);
+CREATE INDEX ix_dsa_fechas ON dias_sin_actividad(fecha_desde, fecha_hasta);
+
 -- Visitas, llamados, reuniones e informes de seguimiento
 CREATE TABLE seguimiento (
     id                  INTEGER PRIMARY KEY,
@@ -336,6 +359,7 @@ CREATE TABLE seguimiento (
     tipo                TEXT NOT NULL DEFAULT 'Visita'
         CHECK (tipo IN ('Visita','Llamado','Reunión','Informe','Otro')),
     docente_id          INTEGER REFERENCES docentes(id),
+    referente_id        INTEGER REFERENCES referentes_empresas(id),   -- referente de la empresa que participó
     descripcion         TEXT NOT NULL,
     creado_en           TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     creado_por          INTEGER REFERENCES usuarios(id),

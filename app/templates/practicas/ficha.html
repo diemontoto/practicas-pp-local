@@ -6,7 +6,7 @@
   <div><h1>{{ p.numero }} · {{ p.proyecto }}</h1>
     <p class="muted">Ciclo {{ p.anio }} · <a href="{{ url_for('empresas.ficha', id=p.empresa_id) }}">{{ p.empresa }}</a> · {{ p.estado|badge }}</p></div>
   <div class="head-actions">
-    {% if can('seguimiento.editar') %}<a class="btn" href="{{ url_for('seguimiento.dia', practica_id=p.id) }}">{{ icon('calendar', 16) }} Asistencia del día</a>{% endif %}
+    {% if can('seguimiento.editar') %}<a class="btn" href="{{ url_for('seguimiento.dia', practica_id=p.id) }}">{{ icon('calendar', 16) }} Inasistencias del día</a>{% endif %}
     {% if can('practicas.editar') %}<a class="btn" href="{{ url_for('practicas.editar', id=p.id) }}">{{ icon('edit', 16) }} Editar</a>{% endif %}
     {% if can('practicas.eliminar') %}{{ post_button(url_for('practicas.baja', id=p.id), 'Dar de baja', 'trash', 'btn btn-danger-outline', '¿Dar de baja esta práctica?') }}{% endif %}
     <a class="btn" href="{{ url_for('practicas.lista') }}">{{ icon('back', 16) }} Listado</a>
@@ -21,7 +21,10 @@
       <dt>Referente de la empresa</dt><dd>{{ p.referente or '—' }}{% if p.ref_tel %} · {{ p.ref_tel }}{% endif %}{% if p.ref_email %} · {{ p.ref_email }}{% endif %}</dd>
       <dt>Período</dt><dd>{{ p.fecha_inicio|fecha or 's/d' }} → {{ p.fecha_fin_estimada|fecha or 's/d' }}{% if p.fecha_fin_real %} (finalizó el {{ p.fecha_fin_real|fecha }}){% endif %}</dd>
       <dt>Horas requeridas</dt><dd>{{ p.horas_requeridas }} h</dd>
-      <dt>Días y horarios</dt><dd>{{ p.dias_horarios or '—' }}</dd>
+      <dt>Días de práctica</dt><dd>{{ dias_txt }} · {{ p.horas_dia|num }} h por día{% if p.dias_horarios %} · {{ p.dias_horarios }}{% endif %}</dd>
+      <dt>Horas del calendario</dt><dd>{% if horas_plan is none %}<span class="muted">Complete las fechas de inicio y de finalización para calcularlas.</span>
+        {% else %}{{ horas_plan|num }} h entre el inicio y la finalización{% if horas_plan < p.horas_requeridas %} <span class="badge badge-amber">no alcanza las {{ p.horas_requeridas }} h requeridas</span>{% endif %}{% endif %}
+        <div class="small muted">Las horas corren automáticamente los días de práctica; sólo se cargan las inasistencias.</div></dd>
       <dt>Objetivos de aprendizaje</dt><dd>{{ p.objetivos or '—' }}</dd>
       <dt>Actividades</dt><dd>{{ p.actividades or '—' }}</dd>
       <dt>Observaciones</dt><dd>{{ p.observaciones or '—' }}</dd>
@@ -68,7 +71,7 @@
         <td>{{ doc_indicator(r.docs_estado, r.docs_faltan) }}{% if r.docs_faltan %}<div class="small muted">Faltan: {{ r.docs_faltan|join(', ') }}</div>{% endif %}</td>
         <td>{% if r.resultado %}{{ r.resultado|badge }} <span class="small">({{ r.calificacion_final|num(2) }})</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="actions">
-          <a class="btn btn-sm" href="{{ url_for('seguimiento.detalle', ap_id=r.ap_id) }}" title="Seguimiento y asistencia">{{ icon('clock', 15) }}</a>
+          <a class="btn btn-sm" href="{{ url_for('seguimiento.detalle', ap_id=r.ap_id) }}" title="Seguimiento e inasistencias">{{ icon('clock', 15) }}</a>
           <a class="btn btn-sm" href="{{ url_for('evaluaciones.detalle', ap_id=r.ap_id) }}" title="Evaluación">{{ icon('award', 15) }}</a>
           {% if can('practicas.editar') %}{{ post_button(url_for('practicas.quitar_alumno', ap_id=r.ap_id), '', 'trash', 'btn-sm btn-danger-outline', '¿Quitar a este alumno de la práctica?', title='Quitar') }}{% endif %}
         </td>
@@ -104,7 +107,8 @@
     {% else %}<p class="muted">Sin documentos cargados.</p>{% endif %}</div>
   <div class="card"><h2>Visitas y observaciones recientes
     {% if can('seguimiento.editar') %}<a class="btn btn-sm" href="{{ url_for('visitas.nuevo', practica_id=p.id, next=request.path) }}">{{ icon('plus', 14) }} Registrar</a>{% endif %}</h2>
-    {% if visitas %}<ul class="plain">{% for v in visitas %}<li style="padding:.4rem 0;border-bottom:1px solid #eef1f5"><strong>{{ v.fecha|fecha }}</strong> · {{ v.tipo }}{% if v.alumno %} · {{ v.alumno }}{% endif %}
+    {% if visitas %}<ul class="plain">{% for v in visitas %}<li style="padding:.4rem 0;border-bottom:1px solid #eef1f5"><strong>{{ v.fecha|fecha }}</strong> · {{ v.tipo }}{% if v.alumno %} · {{ v.alumno }}{% endif %}{% if v.referente %} · <span class="muted">Referente:</span> {{ v.referente }}{% endif %}
+      {% if can('seguimiento.editar') %}<a class="small" href="{{ url_for('visitas.editar', id=v.id, next=request.path) }}">editar</a>{% endif %}
       <div class="small">{{ v.descripcion }}</div></li>{% endfor %}</ul>
     {% else %}<p class="muted">Sin registros de seguimiento.</p>{% endif %}</div>
 </div>

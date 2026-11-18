@@ -58,7 +58,7 @@ erDiagram
     REFERENTES_EMPRESAS ||--o{ PRACTICAS : "referente"
     PRACTICAS ||--o{ ALUMNOS_PRACTICAS : "incluye"
     ALUMNOS ||--o{ ALUMNOS_PRACTICAS : "participa"
-    ALUMNOS_PRACTICAS ||--o{ ASISTENCIAS : "registra"
+    ALUMNOS_PRACTICAS ||--o{ ASISTENCIAS : "inasistencias"
     ALUMNOS_PRACTICAS ||--o{ EVALUACIONES : "evaluada por tutor y referente"
     PRACTICAS ||--o{ SEGUIMIENTO : "visitas y contactos"
     DOCENTES ||--o{ SEGUIMIENTO : "realiza"
@@ -98,6 +98,16 @@ Reglas automáticas (en `services.py` y `views/practicas.py`):
 4. Cuando todas las asignaciones de una práctica tienen resultado, la práctica refleja el resultado.
 5. Al agregar alumnos se avisa si se supera la cantidad de vacantes de la empresa.
 
+### Asistencia automática (v1.1)
+
+Las horas no se cargan: se calculan (`services.calcular_horas`).
+
+- Cada práctica define `dias_semana` (1 = lunes … 7 = domingo) y `horas_dia`.
+- Para cada asignación, los días de práctica entre su fecha de inicio y la de finalización (fin real del alumno, fin real o fin estimado de la práctica; nunca después de hoy) suman la jornada. Sólo corren con la asignación «En curso» o posterior.
+- La tabla `asistencias` guarda únicamente **inasistencias** (justificadas o injustificadas) con las horas a descontar. Horas cumplidas = horas programadas − horas descontadas.
+- La tabla `dias_sin_actividad` excluye fechas: feriados y recesos generales, cierres de una práctica (`practica_id`) y suspensiones de un alumno (`alumno_practica_id`, que el sistema abre y cierra al cambiar el estado).
+- `db.migrate()` actualiza una base anterior al iniciar la aplicación (y al restaurar un respaldo): agrega las columnas, da de baja lógica los registros «Presente» y hace que las ausencias previas descuenten la jornada completa.
+
 ## 4. Seguridad
 
 | Amenaza | Medida |
@@ -134,7 +144,7 @@ practicas-pp/
 ├── schema.sql           DDL completo
 ├── manage.py            init-db, create-admin, seed-demo, backup, run
 ├── wsgi.py              punto de entrada de producción
-├── tests/test_app.py    26 pruebas de integración
+├── tests/test_app.py    30 pruebas de integración
 └── docs/                documentación
 ```
 
@@ -144,4 +154,4 @@ El esquema usa SQL estándar. Pasos: (1) reemplazar `INTEGER PRIMARY KEY` por `G
 
 ## 7. Mejoras incorporadas respecto del pedido
 
-Alertas automáticas (documentación, vencimientos, ritmo de horas insuficiente, prácticas listas para cerrar); control documental por tipo con vencimientos; asistencia del día en lote por práctica; validación de CUIT con dígito verificador; copia de una práctica a otro ciclo; búsqueda global sin acentos; importación con modo «solo validar»; restauración de registros dados de baja; matriz de permisos editable.
+Alertas automáticas (documentación, vencimientos, ritmo de horas insuficiente, prácticas listas para cerrar); control documental por tipo con vencimientos; asistencia automática con carga de inasistencias en lote por práctica; validación de CUIT con dígito verificador; copia de una práctica a otro ciclo; búsqueda global sin acentos; importación con modo «solo validar»; restauración de registros dados de baja; matriz de permisos editable.

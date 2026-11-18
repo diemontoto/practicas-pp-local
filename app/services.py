@@ -1,5 +1,5 @@
 """Reglas de negocio y consultas compartidas entre módulos."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import auth
 from .db import get_config, q, q1, today, ex
@@ -96,23 +96,146 @@ def vacantes_disponibles_total():
     return total
 
 
+# ------------------------------------------------ asistencia automática
+# Las horas de cada alumno corren solas: cada día de práctica (según los días de la semana y las horas
+# diarias de la práctica) entre la fecha de inicio de la asignación y la de finalización suma la jornada.
+# Sólo se cargan las inasistencias, que descuentan sus horas. No suman los feriados/recesos ni los
+# períodos de suspensión (tabla dias_sin_actividad).
+DIAS_SEMANA = [(1, "Lunes"), (2, "Martes"), (3, "Miércoles"), (4, "Jueves"), (5, "Viernes"), (6, "Sábado"), (7, "Domingo")]
+CORREN_HORAS = ("En curso", "Suspendida", "Finalizada", "Aprobada", "Desaprobada")
+TIPOS_INASISTENCIA = ["Ausente injustificado", "Ausente justificado"]
+
+
+def parse_dias(txt):
+    """'1,2,3' -> {1, 2, 3} (1 = lunes ... 7 = domingo). Vacío o inválido: lunes a viernes."""
+    dias = {int(x) for x in str(txt or "").split(",") if x.strip().isdigit() and 1 <= int(x.strip()) <= 7}
+    return dias or {1, 2, 3, 4, 5}
+
+
+def dias_texto(txt):
+    dias = sorted(parse_dias(txt))
+    nombres = dict(DIAS_SEMANA)
+    if len(dias) > 2 and dias == list(range(dias[0], dias[-1] + 1)):
+        return f"{nombres[dias[0]]} a {nombres[dias[-1]].lower()}"
+    return ", ".join(nombres[d] for d in dias).capitalize() if dias else ""
+
+
+def _sin_actividad():
+    """Períodos sin actividad: (generales, {practica_id: [...]}, {ap_id: [...]}) como pares (desde, hasta)."""
+    gen, por_p, por_ap = [], {}, {}
+    for r in q("SELECT fecha_desde, fecha_hasta, practica_id, alumno_practica_id FROM dias_sin_actividad WHERE eliminado_en IS NULL"):
+        par = (r["fecha_desde"], r["fecha_hasta"] or "9999-12-31")
+        if r["alumno_practica_id"]:
+            por_ap.setdefault(r["alumno_practica_id"], []).append(par)
+        elif r["practica_id"]:
+            por_p.setdefault(r["practica_id"], []).append(par)
+        else:
+            gen.append(par)
+    return gen, por_p, por_ap
+
+
+def dias_de_practica(inicio, hasta, dias_semana, excluidos=()):
+    """Fechas ISO de los días de práctica entre dos fechas (inclusive), sin los períodos excluidos."""
+    ini, fin = _parse(inicio), _parse(hasta)
+    if not ini or not fin or fin < ini:
+        return []
+    dias, out, d = parse_dias(dias_semana), [], ini
+    if (fin - ini).days > 3660:          # tope defensivo ante fechas mal cargadas
+        fin = ini + timedelta(days=3660)
+    while d <= fin:
+        if d.isoweekday() in dias:
+            iso = d.isoformat()
+            if not any(a <= iso <= b for a, b in excluidos):
+                out.append(iso)
+        d += timedelta(days=1)
+    return out
+
+
+def periodo_ap(r, hoy=None):
+    """(inicio, hasta) del período en que corren las horas de una asignación; hasta nunca supera hoy."""
+    hoy = hoy or today()
+    ini = r["ap_inicio"] or r["fecha_inicio"]
+    fin = r["ap_fin"] or r["p_fin_real"] or r["fecha_fin_estimada"]
+    return ini, (min(fin, hoy) if fin else hoy)
+
+
+def calcular_horas(rows):
+    """Agrega a cada asignación las horas programadas a la fecha, las descontadas por inasistencias y las cumplidas."""
+    if not rows:
+        return
+    gen, por_p, por_ap = _sin_actividad()
+    ids = [r["ap_id"] for r in rows]
+    sql = "SELECT alumno_practica_id, fecha, tipo, horas FROM asistencias WHERE eliminado_en IS NULL AND tipo <> 'Presente'"
+    faltas = {}
+    if len(ids) <= 200:
+        aus = q(sql + f" AND alumno_practica_id IN ({','.join('?' * len(ids))})", ids)
+    else:
+        aus = q(sql)
+    for a in aus:
+        faltas.setdefault(a["alumno_practica_id"], []).append(a)
+    hoy = today()
+    for r in rows:
+        jornada = float(r["horas_dia"] or 0)
+        ini, hasta = periodo_ap(r, hoy)
+        dias = []
+        if r["estado"] in CORREN_HORAS and ini:
+            dias = dias_de_practica(ini, hasta, r["dias_semana"],
+                                    gen + por_p.get(r["practica_id"], []) + por_ap.get(r["ap_id"], []))
+        prog = set(dias)
+        desc, just, injust = 0.0, 0, 0
+        for a in faltas.get(r["ap_id"], []):
+            if a["fecha"] not in prog:
+                continue                     # fuera del calendario: no hay horas que descontar
+            desc += min(a["horas"] if a["horas"] and a["horas"] > 0 else jornada, jornada)
+            if a["tipo"] == "Ausente justificado":
+                just += 1
+            else:
+                injust += 1
+        r["dias_prog"] = prog
+        r["dias_programados"] = len(dias)
+        r["horas_programadas"] = round(len(dias) * jornada, 2)
+        r["horas_descontadas"] = round(desc, 2)
+        r["horas_realizadas"] = max(0.0, round(len(dias) * jornada - desc, 2))
+        r["faltas_just"], r["faltas_injust"] = just, injust
+        r["dias_presente"] = len(dias) - just - injust
+        r["periodo_desde"], r["periodo_hasta"] = ini, hasta
+
+
+def horas_plan(p):
+    """Horas que suma el calendario completo de una práctica (inicio a fin estimado); None si faltan fechas."""
+    if not p["fecha_inicio"] or not p["fecha_fin_estimada"]:
+        return None
+    gen, por_p, _ = _sin_actividad()
+    dias = dias_de_practica(p["fecha_inicio"], p["fecha_fin_estimada"], p["dias_semana"], gen + por_p.get(p["id"], []))
+    return round(len(dias) * float(p["horas_dia"] or 0), 2)
+
+
+def abrir_suspension(ap_id):
+    """Al suspender a un alumno las horas dejan de correr desde hoy."""
+    if not q1("SELECT 1 FROM dias_sin_actividad WHERE alumno_practica_id = ? AND fecha_hasta IS NULL AND eliminado_en IS NULL", (ap_id,)):
+        ex("INSERT INTO dias_sin_actividad(fecha_desde, motivo, alumno_practica_id, creado_en, creado_por) VALUES (?,?,?, datetime('now','localtime'), ?)",
+           (today(), "Suspensión", ap_id, auth.g.user["id"] if getattr(auth.g, "user", None) else None), commit=False)
+
+
+def cerrar_suspension(ap_id):
+    """Al levantar la suspensión las horas vuelven a correr desde hoy."""
+    ayer = (date.today() - timedelta(days=1)).isoformat()
+    for s in q("SELECT id, fecha_desde FROM dias_sin_actividad WHERE alumno_practica_id = ? AND fecha_hasta IS NULL AND eliminado_en IS NULL", (ap_id,)):
+        if s["fecha_desde"] > ayer:      # suspendida y reanudada el mismo día: no hubo días perdidos
+            ex("UPDATE dias_sin_actividad SET eliminado_en = datetime('now','localtime') WHERE id = ?", (s["id"],), commit=False)
+        else:
+            ex("UPDATE dias_sin_actividad SET fecha_hasta = ? WHERE id = ?", (ayer, s["id"]), commit=False)
+
+
 # --------------------------------------------------------- horas y alumnos
 AP_SQL = """
 SELECT ap.id AS ap_id, ap.practica_id, ap.alumno_id, ap.estado, ap.horas_requeridas,
        ap.calificacion_final, ap.resultado, ap.fecha_inicio AS ap_inicio, ap.fecha_fin_real AS ap_fin,
-       COALESCE((SELECT SUM(s.horas) FROM asistencias s
-                 WHERE s.alumno_practica_id = ap.id AND s.eliminado_en IS NULL), 0) AS horas_realizadas,
-       (SELECT COUNT(*) FROM asistencias s WHERE s.alumno_practica_id = ap.id AND s.eliminado_en IS NULL
-          AND s.tipo = 'Presente') AS dias_presente,
-       (SELECT COUNT(*) FROM asistencias s WHERE s.alumno_practica_id = ap.id AND s.eliminado_en IS NULL
-          AND s.tipo = 'Ausente justificado') AS faltas_just,
-       (SELECT COUNT(*) FROM asistencias s WHERE s.alumno_practica_id = ap.id AND s.eliminado_en IS NULL
-          AND s.tipo = 'Ausente injustificado') AS faltas_injust,
        a.legajo, a.apellido, a.nombre, a.dni, a.curso_id, a.division_id, a.especialidad_id,
        a.apellido || ', ' || a.nombre AS alumno,
        c.nombre AS curso, d.nombre AS division, e.nombre AS especialidad,
        p.numero, p.ciclo_id, p.empresa_id, p.proyecto, p.fecha_inicio, p.fecha_fin_estimada,
-       p.tutor_id, p.estado AS practica_estado, p.referente_id,
+       p.tutor_id, p.estado AS practica_estado, p.referente_id, p.dias_semana, p.horas_dia, p.fecha_fin_real AS p_fin_real,
        em.razon_social AS empresa, ci.anio, doc.apellido || ', ' || doc.nombre AS tutor
 FROM alumnos_practicas ap
 JOIN practicas p   ON p.id = ap.practica_id AND p.eliminado_en IS NULL
@@ -160,11 +283,16 @@ def ap_rows(filtros=None, order="a.apellido, a.nombre", scoped=True, con_docs=Tr
         params += sp
     sql = AP_SQL + (" AND " + " AND ".join(where) if where else "") + f" ORDER BY {order}"
     rows = [dict(r) for r in q(sql, params)]
+    calcular_horas(rows)
     docs = doc_status_map(rows) if con_docs else {}
     for r in rows:
         req = r["horas_requeridas"] or 1
         r["porcentaje"] = min(100.0, round(r["horas_realizadas"] * 100.0 / req, 1))
         r["horas_faltan"] = max(0.0, round(req - r["horas_realizadas"], 2))
+        # Fechas de la práctica del alumno (las propias de la asignación prevalecen sobre las de la práctica)
+        r["fecha_desde"] = r["ap_inicio"] or r["fecha_inicio"]
+        r["fecha_hasta"] = r["ap_fin"] or r["p_fin_real"] or r["fecha_fin_estimada"]
+        r["fecha_hasta_estimada"] = not (r["ap_fin"] or r["p_fin_real"]) and bool(r["fecha_fin_estimada"])
         if con_docs:
             st, faltan = docs.get(r["ap_id"], ("Completa", []))
             r["docs_estado"], r["docs_faltan"] = st, faltan

@@ -24,6 +24,9 @@
         <input id="password" name="password" type="password" required autocomplete="current-password"></div>
       <button class="btn btn-primary btn-block" type="submit">Ingresar</button>
     </form>
+    {% if consulta_publica %}
+    <a class="btn btn-block btn-guest" href="{{ url_for('consulta.inicio') }}">Consultar seguimiento sin usuario</a>
+    {% endif %}
     <p class="small muted center">Acceso restringido al personal autorizado. Las operaciones quedan registradas.</p>
   </main>
 </body>

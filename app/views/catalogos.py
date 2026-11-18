@@ -1,6 +1,6 @@
 """Catálogos institucionales: especialidades, cursos, divisiones, tipos de documento y ciclos lectivos."""
 from ..crud import C, Entity, F
-from ..db import ex
+from ..db import ex, q
 
 DEPS_ESP = (
     ("SELECT COUNT(*) FROM alumnos WHERE especialidad_id = ? AND eliminado_en IS NULL", "alumno(s)"),
@@ -84,5 +84,36 @@ ciclos = Entity(
 )
 
 
+def _dsa_before(vals, row, errors):
+    if vals.get("fecha_desde") and "fecha_desde" not in errors:
+        if not vals.get("fecha_hasta"):
+            vals["fecha_hasta"] = vals["fecha_desde"]          # un solo día
+        elif "fecha_hasta" not in errors and vals["fecha_hasta"] < vals["fecha_desde"]:
+            errors["fecha_hasta"] = "No puede ser anterior a la fecha inicial."
+
+
+def _practicas_choices():
+    return [(p["id"], f"{p['numero']} · {p['empresa']}") for p in q(
+        "SELECT p.id, p.numero, em.razon_social AS empresa FROM practicas p JOIN empresas em ON em.id = p.empresa_id "
+        "WHERE p.eliminado_en IS NULL ORDER BY p.numero DESC")]
+
+
+dias_sin_actividad = Entity(
+    "dias_sin_actividad", "dias_sin_actividad", "Día sin actividad", "Feriados y recesos", "catalogos",
+    fields=[
+        F("fecha_desde", "Desde", "date", required=True),
+        F("fecha_hasta", "Hasta", "date", help="Déjelo vacío si es un solo día."),
+        F("motivo", "Motivo", required=True, maxlen=150, placeholder="Feriado nacional, receso invernal, cierre de la empresa…"),
+        F("practica_id", "Aplica sólo a la práctica", "select", coerce=int, choices=_practicas_choices,
+          help="Sin práctica elegida aplica a todas (feriado o receso general)."),
+    ],
+    columns=[C("fecha_desde", "Desde", "date"), C("fecha_hasta", "Hasta", "date"), C("motivo", "Motivo"), C("practica", "Práctica")],
+    select="SELECT t.*, COALESCE(p.numero, 'Todas') AS practica FROM dias_sin_actividad t LEFT JOIN practicas p ON p.id = t.practica_id",
+    search=("t.motivo",), order="t.fecha_desde DESC", before_save=_dsa_before, nuevo_label="Nuevo día sin actividad",
+    scope=lambda: ("t.alumno_practica_id IS NULL", []),
+    subtitle="En estas fechas no corren las horas automáticas de las prácticas: no suman horas ni admiten inasistencias.",
+)
+
+
 def blueprints():
-    return [e.blueprint(f"/configuracion/{e.slug}") for e in (especialidades, cursos, divisiones, tipos_documentos, ciclos)]
+    return [e.blueprint(f"/configuracion/{e.slug}") for e in (especialidades, cursos, divisiones, tipos_documentos, ciclos, dias_sin_actividad)]

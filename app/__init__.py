@@ -7,7 +7,7 @@ from flask import Flask, g, render_template, request
 
 from . import auth, db, filters, services
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 def _secret_key(instance_path):
@@ -51,23 +51,26 @@ def create_app(config=None):
         con = db.connect(app.config["DATABASE"])
         init_base(con)
         con.close()
+    db.migrate(app.config["DATABASE"])
 
     db.init_app(app)
     filters.init_app(app)
     auth.init_app(app)
 
-    from .views import (admin, alumnos, catalogos, docentes, documentos, empresas, evaluaciones, informes,
+    from .views import (admin, alumnos, catalogos, consulta, docentes, documentos, empresas, evaluaciones, informes,
                         main, practicas, seguimiento)
     for mod in (main, catalogos, alumnos, empresas, docentes, practicas, seguimiento, documentos,
-                evaluaciones, informes, admin):
+                evaluaciones, informes, admin, consulta):
         for bp in mod.blueprints():
             app.register_blueprint(bp)
 
     @app.context_processor
     def inject():
-        cfg = db.all_config() if getattr(g, "user", None) or request.endpoint == "auth.login" else {}
+        publico = request.endpoint in ("auth.login", "consulta.inicio")
+        cfg = db.all_config() if getattr(g, "user", None) or publico else {}
         return dict(escuela=cfg, version=__version__, ciclo_activo=services.ciclo_activo() if getattr(g, "user", None) else None,
-                    alert_count=_alert_count)
+                    alert_count=_alert_count,
+                    consulta_publica=publico and cfg.get("consulta_publica", "1") == "1")
 
     def _alert_count():
         if not getattr(g, "user", None) or not auth.can("practicas.ver"):

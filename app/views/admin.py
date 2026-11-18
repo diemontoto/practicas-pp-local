@@ -106,7 +106,8 @@ def configuracion():
             umbral = float((request.form.get("umbral_ritmo") or "").replace(",", "."))
             if not (1 <= nota <= 10 and 0 <= dias <= 365 and 5 <= umbral <= 100):
                 raise ValueError
-            cambios.update(nota_aprobacion=f"{nota:g}", dias_alerta_vencimiento=str(dias), umbral_ritmo=f"{umbral:g}")
+            cambios.update(nota_aprobacion=f"{nota:g}", dias_alerta_vencimiento=str(dias), umbral_ritmo=f"{umbral:g}",
+                           consulta_publica="1" if request.form.get("consulta_publica") else "0")
         except ValueError:
             errs.append("Revise los parámetros: nota de aprobación 1-10, días de alerta 0-365, umbral de ritmo 5-100.")
         if errs:
@@ -121,6 +122,7 @@ def configuracion():
             flash("Configuración guardada.", "success")
             return redirect(url_for("admin.configuracion"))
     cfg = {k: get_config(k, "") for k in [s[0] for s in SCHOOL_KEYS] + ["nota_aprobacion", "dias_alerta_vencimiento", "umbral_ritmo"]}
+    cfg["consulta_publica"] = get_config("consulta_publica", "1") or "1"
     return render_template("admin/configuracion.html", cfg=cfg, school_keys=SCHOOL_KEYS)
 
 
